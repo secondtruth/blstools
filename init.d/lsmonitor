@@ -1,0 +1,200 @@
+#!/bin/sh
+
+### BEGIN INIT INFO
+# Provides:          lsmonitor
+# Required-Start:    $syslog
+# Required-Stop:     $syslog
+# Default-Start:     2 3 4 5
+# Default-Stop:      0 1 6
+# Short-Description: Monitor the LinkStation unit status
+# Description:       Enable service provided by daemon.
+### END INIT INFO
+
+# lsmonitor:
+# - handle ls complete power-on
+# - monitor power switch
+# - monitor hdd temperature & control fan speed
+# - monitor function button
+#
+# blstools - Tools for Buffalo LinkStation
+# Copyright (C) 2010-2011 Michele Manzato
+# Distributed under the MIT License
+#
+# Credits:
+#   Thanks to archonfx at Buffalo NAS Central forum for HDD
+#   temperature monitoring command.
+
+# Load settings
+. /etc/default/lsmonitor
+
+# Location of pid files
+LSMONITOR_PIDFILE=/var/run/lsmonitor_daemon.pid
+LSFUNC_PIDFILE=/var/run/lsfunc_daemon.pid
+
+# Logfile for lsfunc
+LSFUNC_LOGFILE=/var/log/blstools/func-scripts.log
+
+# Monitor HDD temperature & control fan speed
+monitor_temperature()
+{
+	# Retrieve HDD temp
+	# Also working for HDDs that supply Min/Max temperature info (thanks to ewano for pointing this out)
+	HDDTEMP=$(smartctl -d marvell /dev/sda --all -T permissive | grep "^194" | sed -re 's/^.* ([0-9]+)( .*)?$/\1/')
+
+	# Change fan speed accordingly
+	if [ $HDDTEMP -le $HDDTEMP0 ] ; then
+		echo stop > /proc/buffalo/gpio/fan/control
+	elif [ $HDDTEMP -le $HDDTEMP1 ] ; then
+		echo slow > /proc/buffalo/gpio/fan/control
+	elif [ $HDDTEMP -le $HDDTEMP2 ] ; then
+		echo fast > /proc/buffalo/gpio/fan/control
+	else
+		echo full > /proc/buffalo/gpio/fan/control
+	fi
+}
+
+
+# Control LS switch status to power down the unit
+lsmonitor_daemon()
+{
+	COUNT=20
+	while [ true ] ; do
+		# Tell whether switch is in "on" position
+		ON=0
+		S=$(cat /proc/buffalo/gpio/switch/power)
+		if [ "$S" = "on" ] ; then
+			ON=1
+		else
+			S=$(cat /proc/buffalo/gpio/switch/auto_power)
+			if [ "$S" = "on" ] ; then
+				ON=1
+			fi
+		fi
+
+		# Terminate when in OFF state
+		if [ $ON -eq 0 ] ; then
+			break
+		fi
+
+		# Once per minute monitor HDD temperature
+		if [ $COUNT -eq 20 ] ; then
+			COUNT=0
+			monitor_temperature
+		else
+			COUNT=$(( $COUNT + 1 ))
+		fi
+
+		sleep 3
+	done
+
+	# Run the fan at low speed while halting, just in case halt hangs the unit
+	echo slow > /proc/buffalo/gpio/fan/control
+
+	# Initiate unit shutdown
+	halt
+}
+
+# Monitor the LS function button and run user scripts
+# The function led is switched to blinking blue during the execution of the scripts
+lsfunc_daemon()
+{
+	while [ true ]; do
+		# Tell whether the function button is pressed
+		ON=0
+		S=$(cat /proc/buffalo/gpio/switch/func)
+		if [ "$S" = "on" ] ; then
+			# Start blue-blinking the function button
+			echo on > $LED_FUNC_BLINK
+
+			# Run user scripts in /etc/blstools/func-scripts
+			RES=0
+			for F in $(ls /etc/blstools/func-scripts/* 2> /dev/null) ; do
+				if [ -x $F ]; then
+					date=`date +"%Y-%m-%d %H:%M:%S"`
+					echo -n "[$date] Start: $F" >> "$LSFUNC_LOGFILE"
+					$F >> "$LSFUNC_LOGFILE" 2>&1
+					RES=$(($RES + $?))
+					date=`date +"%Y-%m-%d %H:%M:%S"`
+					echo -n "[$date] End: $F" >> "$LSFUNC_LOGFILE"
+				fi
+			done
+
+			# Stop blue-blinking the function button
+			echo off > $LED_FUNC_BLINK
+
+			if [ ! $RES -eq 0 ]; then
+				# Error: blink the red light for 5 seconds
+				echo on > $LED_FUNCRED_BLINK
+				sleep 5
+				echo off > $LED_FUNCRED_BLINK
+			fi
+		fi
+
+		sleep 1
+	done
+}
+
+# Kill the lsmonitor_daemon and the lsfunc_daemon
+kill_daemons()
+{
+	PID=`cat $LSMONITOR_PIDFILE`
+	if [ "$PID" != "" ] ; then
+		kill $PID 2> /dev/null
+		rm $LSMONITOR_PIDFILE
+	fi
+
+	PID=`cat $LSFUNC_PIDFILE`
+	if [ "$PID" != "" ] ; then
+		kill $PID 2> /dev/null
+		rm $LSFUNC_PIDFILE
+	fi
+}
+
+
+# Main loop
+case $1 in
+	start)
+		# Make power led fixed blue
+		echo "off" > $LED_POWER_BLINK
+		echo "on" > $LED_POWER
+
+		# Booting flag change. 
+		# Don't really know what it's for...
+		echo 0 > /proc/buffalo/booting
+
+		if [ -f /proc/buffalo/gpio/switch/sw_control ] ; then
+			echo on > /proc/buffalo/gpio/switch/sw_control
+		fi
+
+		# Make sure SMART is enabled on main HDD
+		smartctl -d marvell -s on -o on -S on -q silent /dev/sda
+
+		# Start the daemons and save the PIDs
+		lsmonitor_daemon &
+		echo $! > $LSMONITOR_PIDFILE
+		lsfunc_daemon &
+		echo $! > $LSFUNC_PIDFILE
+		;;
+
+	stop)
+		# Kill the daemons
+		kill_daemons
+
+		# Change the booting flag
+		# Don't really know what it's for...
+		echo 1 > /proc/buffalo/booting
+
+		# Make the power led blinking blue
+		echo "off" > $LED_POWER
+		echo "on" > $LED_POWER_BLINK
+		;;
+
+	restart|force-reload)
+		$0 stop && sleep 2 && $0 start
+		;;
+
+	*)
+		echo "Usage: $0 {start|stop|restart|force-reload}"
+		exit 2
+		;;
+esac

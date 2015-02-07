@@ -1,0 +1,94 @@
+#!/bin/bash
+
+### BEGIN INIT INFO
+# Provides:          usb
+# Required-Start:    
+# Required-Stop:     
+# Default-Start:     
+# Default-Stop:      
+# Short-Description: Control USB power status
+# Description:       Controls the power status of the USB interface
+### END INIT INFO
+
+# usb: Control USB power status
+#
+# blstools - Tools for Buffalo LinkStation
+# Copyright (C) 2010-2011 Michele Manzato
+# Distributed under the MIT License
+
+MODULES=("usbcore" "ehci-hcd" "ohci-hcd" "uhci-hcd" "usb_storage" "usblp")
+
+load_modules()
+{
+	COUNTER=0
+	while [ ${MODULES[${COUNTER}]} ]
+	do
+		modprobe ${MODULES[${COUNTER}]}
+		[ $? -ne 0 ] && return 1
+		COUNTER=$((${COUNTER} + 1))
+	done 
+	return 0
+}
+
+unload_modules()
+{
+	COUNTER=$(( ${#MODULES[@]} - 1 ))
+	while [ ${COUNTER} -ge 0 ]
+	do
+		modprobe -r ${MODULES[${COUNTER}]}
+		[ $? -ne 0 ] && return 1
+		COUNTER=$((${COUNTER} - 1))
+	done
+}
+
+detect_usbfs()
+{
+	IsMounted=`cat /proc/mounts |grep usbfs`
+	if [ "${IsMounted}" != "" ] ; then
+		return 1
+	else
+		return 0
+	fi
+}
+
+mount_usbfs()
+{
+	detect_usbfs
+	[ $? -eq 1 ] && return 0
+	mount -t usbfs usbfs /proc/bus/usb
+	return $?
+}
+
+umount_usbfs()
+{
+	detect_usbfs
+	[ $? -eq 0 ] && return 0
+	umount -f /proc/bus/usb
+	return $?
+}
+
+
+case $1 in
+	start)
+		# Power on the USB interface
+		echo on > /proc/buffalo/gpio/power_control/usb0
+
+		load_modules
+		[ $? -ne 0 ] && echo "USB power-on failed" 1>&2 && unload_modules && exit 1
+
+		mount_usbfs
+		;;
+
+	stop)
+		umount_usbfs
+		[ $? -ne 0 ] && echo "USB power-off failed" 1>&2 && exit 1
+
+		unload_modules
+
+		# Power off the USB interface
+		echo off > /proc/buffalo/gpio/power_control/usb0
+		;;
+
+	*)
+		;;
+esac

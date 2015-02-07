@@ -1,0 +1,12 @@
+# Default settings for lsmonitor
+
+# HDD temperature thresholds
+HDDTEMP0=40
+HDDTEMP1=45
+HDDTEMP2=50
+
+# DO NOT CHANGE THESE VALUES UNLESS YOU KNOW WHAT YOU DO
+LED_POWER=/proc/buffalo/gpio/led/power
+LED_POWER_BLINK=/proc/buffalo/gpio/led/power_blink
+LED_FUNC_BLINK=/proc/buffalo/gpio/led/func_blink
+LED_FUNCRED_BLINK=/proc/buffalo/gpio/led/funcred_blink

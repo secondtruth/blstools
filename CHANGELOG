@@ -1,0 +1,26 @@
+0.4.0 (Oct 23, 2014)
+
+	Fixed usb stop, thanks to Guilherme Cardoso for pointing this out
+
+0.3.0 (May 17, 2012)
+
+	Added support to launch custom scripts by pressing the function button
+	at the front of the unit. See README in further info.
+
+	Changed licensing to MIT license.
+	
+	Fixed HDD temperature monitoring (thanks to user ewano)
+
+	USB launch script /etc/init.d/usb needs BASH rather than DASH.
+
+0.2.0 (June 5, 2010)
+
+	Introduced support for fan speed regulation onsystem temperature, 
+	taken from hard disk S.M.A.R.T. information.
+
+0.1.0 (May 14, 2010)
+
+	Initial release, supporting:
+	- system shutdown via back switch
+	- power led control
+	- USB power on/off
